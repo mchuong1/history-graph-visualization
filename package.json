@@ -1,0 +1,49 @@
+{
+  "name": "history-graph-visualization",
+  "version": "1.0.0",
+  "description": "A template to visually see anything ranked over the years",
+  "main": "src/index.tsx",
+  "scripts": {
+    "start": "remotion studio src/index.tsx",
+    "build": "remotion render src/index.tsx BarChartRace out/video.mp4",
+    "still": "remotion still src/index.tsx BarChartRace out/preview.png",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mchuong1/history-graph-visualization.git"
+  },
+  "keywords": [
+    "remotion",
+    "recharts",
+    "visualization",
+    "bar-chart-race"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mchuong1/history-graph-visualization/issues"
+  },
+  "homepage": "https://github.com/mchuong1/history-graph-visualization#readme",
+  "dependencies": {
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slider": "^1.3.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@remotion/player": "^4.0.434",
+    "@remotion/tailwind-v4": "^4.0.434",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "recharts": "^3.8.0",
+    "remotion": "^4.0.434"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.434",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3"
+  }
+}
