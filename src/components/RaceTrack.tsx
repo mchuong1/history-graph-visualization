@@ -21,6 +21,8 @@ const ZOOM_HOLD_F = 30;
 const ZOOM_OUT_F = 12;
 /** Peak scale factor when zooming into rank-1 runner. */
 const ZOOM_PEAK = 1.4;
+/** Horizontal oscillation amplitude as a fraction of TRACK_W (mirrors PhysicsBarChart). */
+const OSCILLATION_AMPLITUDE = 0.04;
 
 function localSceneFrames(
   s: TimeSnapshot,
@@ -200,9 +202,12 @@ export function RaceTrack({
   // Running "bob" animation: BPM-driven for rank-1, gentle sine for others
   const rank1Bpm =
     [...currentSnapshot.entries].sort((a, b) => b.value - a.value)[0]?.bpm ?? 120;
-  const eqBeatsPerFrameRT = (fps * 60) / rank1Bpm;
-  // Rank-1 oscillates in BPM rhythm; others stay still
-  const bpmBobOffset = Math.sin((frame / eqBeatsPerFrameRT) * Math.PI * 2) * 5;
+
+  // ── BPM-driven horizontal oscillation (mirrors PhysicsBarChart) ─────────────
+  const rank1OscFreq = (rank1Bpm / 60) * (2 * Math.PI) / fps; // rad/frame
+  const beatSign = Math.sin(frame * rank1OscFreq);             // –1 to +1
+  const audioAmplitude = Math.abs(Math.sin(frame * rank1OscFreq)); // fallback: |sin|
+  const xPulse = beatSign * audioAmplitude * TRACK_W * OSCILLATION_AMPLITUDE;
 
   // ── Rank-1 song change → zoom in on the new leader ───────────────────────────────────
   // Find the previous non-synthetic snapshot to detect a rank-1 change.
@@ -221,6 +226,14 @@ export function RaceTrack({
     !currentSnapshot.isSynthetic &&
     currentRank1Name !== prevRank1Name &&
     prevRank1Name !== "";
+
+  // ── Dynamic transformOrigin: zoom toward rank-1 runner's actual position ──────
+  const rank1Entry = renderEntriesRT.find((e) => Math.round(e.interpolatedIndex) === 0);
+  const rank1XRatio = rank1Entry ? rank1Entry.displayValue / globalMax : 1;
+  const rank1AvatarCx = rank1XRatio * (TRACK_W - AVATAR_SIZE) + AVATAR_SIZE / 2;
+  const rank1CenterX = LABEL_WIDTH + rank1AvatarCx;
+  const rank1CenterY = LANES_TOP + LANE_H / 2;
+
   const zoomScale = isNewLeader
     ? interpolate(
         frameInScene,
@@ -352,7 +365,7 @@ export function RaceTrack({
           width: "100%",
           height: "100%",
           transform: `scale(${zoomScale})`,
-          transformOrigin: "top center",
+          transformOrigin: `${rank1CenterX}px ${rank1CenterY}px`,
         }}
       >
       {/* ── Runners ── */}
@@ -365,8 +378,8 @@ export function RaceTrack({
         const avatarLeft = LABEL_WIDTH + avatarCx - AVATAR_SIZE / 2;
         const avatarTop = LANES_TOP + entry.interpolatedIndex * LANE_H + (LANE_H - AVATAR_SIZE) / 2;
 
-        // Leader bob: BPM-driven oscillation; others use ambient bob
-        const yOffset = isLeader ? bpmBobOffset : 0;
+        // Leader horizontal BPM pulse (mirrors PhysicsBarChart oscillation)
+        const xOffset = isLeader ? xPulse : 0;
 
         // Speed streaks behind the leader
         const streakWidth = isLeader ? 40 + xRatio * 60 : 0;
@@ -386,8 +399,8 @@ export function RaceTrack({
                     key={offset}
                     style={{
                       position: "absolute",
-                      top: avatarTop + AVATAR_SIZE / 2 - 1 + yOffset + offset - 12,
-                      left: avatarLeft - streakWidth,
+                      top: avatarTop + AVATAR_SIZE / 2 - 1 + offset - 12,
+                      left: avatarLeft + xOffset - streakWidth,
                       width: streakWidth,
                       height: 1.5,
                       background:
@@ -403,8 +416,8 @@ export function RaceTrack({
             <div
               style={{
                 position: "absolute",
-                top: avatarTop + yOffset,
-                left: avatarLeft,
+                top: avatarTop,
+                left: avatarLeft + xOffset,
                 width: AVATAR_SIZE,
                 height: AVATAR_SIZE,
                 borderRadius: "50%",
@@ -450,8 +463,8 @@ export function RaceTrack({
             <div
               style={{
                 position: "absolute",
-                top: avatarTop + yOffset - 8,
-                left: avatarLeft + AVATAR_SIZE - 14,
+                top: avatarTop - 8,
+                left: avatarLeft + xOffset + AVATAR_SIZE - 14,
                 width: 22,
                 height: 22,
                 borderRadius: "50%",
