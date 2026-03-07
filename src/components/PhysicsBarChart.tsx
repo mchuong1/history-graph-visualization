@@ -1,5 +1,6 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, spring, interpolate, Audio, Sequence, staticFile } from "remotion";
+import { useAudioData, visualizeAudio } from "@remotion/media-utils";
 import type { BarChartRaceProps, DataEntry, TimeSnapshot } from "../types/index";
 import {
   buildExpandedTimeSnapshots,
@@ -140,6 +141,39 @@ export function PhysicsBarChart({
   const currentSnapshot = snapshots[sceneIndex];
   const nextSnapshot = snapshots[Math.min(sceneIndex + 1, snapshots.length - 1)];
 
+  // Nearest real (non-synthetic) snapshot — must be computed before any early return
+  // so hooks below are always called unconditionally.
+  const nearestRealIdx = (() => {
+    for (let i = sceneIndex; i >= 0; i--) {
+      if (!snapshots[i].isSynthetic) return i;
+    }
+    return 0;
+  })();
+
+  // Rank-1 audioSrc locked to the current real month.
+  // Strip leading slash and resolve through staticFile() so Remotion can locate
+  // the local file in public/ and decode it with useAudioData.
+  const rawAudioSrc = snapshots[nearestRealIdx].entries[0]?.audioSrc ?? null;
+  const rank1AudioSrc = rawAudioSrc ? staticFile(rawAudioSrc.replace(/^\//, "")) : null;
+
+  // Frame offset into the audio file so visualizeAudio analyses the right position
+  let audioStartFrame = sceneStarts[nearestRealIdx] ?? 0;
+  if (rawAudioSrc) {
+    for (let i = nearestRealIdx - 1; i >= 0; i--) {
+      if (snapshots[i].isSynthetic) continue;
+      if (snapshots[i].entries[0]?.audioSrc === rawAudioSrc) {
+        audioStartFrame = sceneStarts[i] ?? 0;
+      } else {
+        break;
+      }
+    }
+  }
+  const audioFrame = Math.max(0, frame - audioStartFrame);
+
+  // Hook — must be called unconditionally (before any early returns).
+  // Cast handles the null case at the type level; the hook returns null when src is falsy.
+  const audioData = useAudioData(rank1AudioSrc as string);
+
   if (!currentSnapshot || !nextSnapshot) return null;
 
   const h = currentSnapshot.isSynthetic ? SYNTHETIC_HOLD_FRAMES : localHold;
@@ -232,6 +266,24 @@ export function PhysicsBarChart({
     Math.max(...snapshots.flatMap((s) => s.entries.map((e) => e.value))) *
     MAX_VALUE_PADDING;
 
+  // ── Bar oscillation + shimmer constants ────────────────────────────────────
+  const OSCILLATION_AMPLITUDE = 0.5; // fraction of barWidth (0.5 = ±50%)
+  const SHIMMER_SPEED = 3;          // px / frame
+
+  // BPM drives oscillation direction frequency; nearestRealIdx resolved above the early return
+  const rank1Bpm = snapshots[nearestRealIdx].entries[0]?.bpm ?? 120;
+  const rank1OscFreq = (rank1Bpm / 60) * (2 * Math.PI) / fps; // rad / frame
+
+  // Audio amplitude (0–1): average of bass/mid frequency bands from the actual audio waveform.
+  // Falls back to |sin| of the BPM beat when no audio data is available yet.
+  const audioAmplitude = audioData
+    ? (() => {
+        const bars = visualizeAudio({ fps, frame: audioFrame, audioData, numberOfSamples: 32 });
+        const bass = bars.slice(0, 16);
+        return bass.reduce((s, v) => s + v, 0) / bass.length;
+      })()
+    : Math.abs(Math.sin(frame * rank1OscFreq));
+
   // ── Audio segments ────────────────────────────────────────────────
   const totalFrames =
     sceneStarts[sceneStarts.length - 1] +
@@ -267,7 +319,7 @@ export function PhysicsBarChart({
   const THUMB_SIZE = 36;
   const NAME_W = 220;
   const PAD_L = 24;
-  const PAD_R = 100; // space for value label
+  const PAD_R = 24;
   const BAR_AREA_W = 1280 - PAD_L - THUMB_SIZE - NAME_W - PAD_R - 16 * 3;
   const ROW_H = Math.floor((720 - 80) / topN);
   const BAR_H = Math.min(ROW_H - 14, 40);
@@ -356,6 +408,16 @@ export function PhysicsBarChart({
         </div>
       )}
 
+      {/* ── Bars + Particle bursts ── */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+        }}
+      >
       {/* ── Bars ── */}
       {displayRows.map((row) => {
         const rowTop = ROWS_TOP + row.interpolatedIndex * ROW_H;
@@ -381,6 +443,14 @@ export function PhysicsBarChart({
 
         // Bar fill: gradient from entity color to a lighter version
         const barColor = row.color ?? "#6366f1";
+
+        // Rank-1 bar: right edge pulses in/out at BPM frequency
+        // Beat sign (-1 to 1) drives in/out direction; audioAmplitude scales magnitude by loudness
+        const beatSign = Math.sin(frame * rank1OscFreq);
+        const barWidthPulse = isLeader && barWidth > 1
+          ? beatSign * audioAmplitude * barWidth * OSCILLATION_AMPLITUDE
+          : 0;
+        const displayBarWidth = Math.min(Math.max(0, barWidth + barWidthPulse), BAR_AREA_W);
 
         return (
           <React.Fragment key={row.name}>
@@ -520,7 +590,7 @@ export function PhysicsBarChart({
                 position: "absolute",
                 top: barTop,
                 left: PAD_L + THUMB_SIZE + NAME_W + 16,
-                width: barWidth,
+                width: displayBarWidth,
                 height: BAR_H,
                 borderRadius: 4,
                 background: isLeader
@@ -545,25 +615,31 @@ export function PhysicsBarChart({
                   borderRadius: "4px 4px 0 0",
                 }}
               />
+
+              {/* Shimmer sweep — all bars, staggered by rank so they don't move in unison */}
+              {displayBarWidth > 1 && (() => {
+                const shimmerBandW = displayBarWidth * 0.45;
+                const cycle = displayBarWidth + shimmerBandW;
+                const shimmerLeft =
+                  ((frame * SHIMMER_SPEED + visualRank * 20) % cycle) - shimmerBandW;
+                return (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: shimmerLeft,
+                      width: shimmerBandW,
+                      height: "100%",
+                      background:
+                        "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.22) 50%, transparent 100%)",
+                      pointerEvents: "none",
+                    }}
+                  />
+                );
+              })()}
             </div>
 
-            {/* Value label */}
-            <div
-              style={{
-                position: "absolute",
-                top: barTop + (BAR_H - 16) / 2,
-                left:
-                  PAD_L + THUMB_SIZE + NAME_W + 16 + barWidth + 8,
-                fontSize: 11,
-                fontWeight: 700,
-                color: isLeader
-                  ? "rgba(255,215,0,0.9)"
-                  : "rgba(255,255,255,0.55)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {Math.round(row.displayValue)}
-            </div>
+
           </React.Fragment>
         );
       })}
@@ -578,6 +654,7 @@ export function PhysicsBarChart({
           color={evt.color}
         />
       ))}
+      </div>
 
       {/* Bottom gradient bar */}
       <div

@@ -32,6 +32,7 @@ const ROOT = resolve(__dirname, "..");
 const CSV_PATH = resolve(ROOT, "datasets/billboard_hot100.csv");
 const CACHE_PATH = resolve(ROOT, "datasets/spotify_preview_cache.json");
 const COVER_CACHE_PATH = resolve(ROOT, "datasets/billboard_cover_cache.json");
+const BPM_CACHE_PATH = resolve(ROOT, "datasets/bpm_cache.json");
 const AUDIO_DIR = resolve(ROOT, "public/audio");
 const IMAGES_DIR = resolve(ROOT, "public/images");
 const OUT_PATH = resolve(ROOT, "src/data/billboardHot100.ts");
@@ -158,7 +159,7 @@ function aggregateMonthly(rows) {
  * Queries the free Deezer Search API for a 30-second preview URL and album cover.
  * Returns { preview, coverUrl } — either may be null if not found.
  */
-async function fetchDeezerData(song, artist) {
+async function fetchDeezerData(song, artist, { getBpm = false } = {}) {
   // Strip featured artist suffixes for a cleaner query.
   // e.g. "Dua Lipa Featuring DaBaby" → "Dua Lipa"
   const primaryArtist = artist
@@ -201,16 +202,34 @@ async function fetchDeezerData(song, artist) {
         data.data[0];
 
       if (best) {
+        // BPM is present in search results for many tracks.
+        // Deezer search includes bpm as a numeric field; 0 means unknown.
+        let bpm = (typeof best.bpm === "number" && best.bpm > 0) ? best.bpm : null;
+
+        // If caller needs BPM and search result had none, fetch full track object.
+        if (getBpm && !bpm && best.id) {
+          try {
+            const trackRes = await fetch(`https://api.deezer.com/track/${best.id}`, {
+              headers: { "User-Agent": "history-graph-visualization/1.0" },
+            });
+            if (trackRes.ok) {
+              const trackData = await trackRes.json();
+              bpm = (typeof trackData.bpm === "number" && trackData.bpm > 0) ? trackData.bpm : null;
+            }
+          } catch { /* ignore */ }
+        }
+
         return {
           preview: best.preview ?? null,
           coverUrl: best.album?.cover_medium ?? best.album?.cover ?? null,
+          bpm,
         };
       }
     } catch {
       continue;
     }
   }
-  return { preview: null, coverUrl: null };
+  return { preview: null, coverUrl: null, bpm: null };
 }
 
 function sleep(ms) {
@@ -315,6 +334,7 @@ async function main() {
 
   let previewCache = {};
   let coverCache = {};
+  let bpmCache = {};
   if (doAudio) {
     if (existsSync(CACHE_PATH)) {
       previewCache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
@@ -362,7 +382,11 @@ async function main() {
     }
 
     console.log("🎵  Fetching preview + cover URLs via Deezer (no auth needed)…");
-
+    let bpmCache = {};
+    if (existsSync(BPM_CACHE_PATH)) {
+      bpmCache = JSON.parse(readFileSync(BPM_CACHE_PATH, "utf8"));
+      console.log(`\uD83C\uDFBC  Loaded ${Object.keys(bpmCache).length} cached BPM entries`);
+    }
     let fetched = 0;
     let skipped = 0;
 
@@ -388,7 +412,8 @@ async function main() {
       const cacheKey = `${song}|||${artist}`;
       const needsAudio = audioPairs.has(pair) && !(cacheKey in previewCache);
       const needsCover = !(cacheKey in coverCache);
-      if (needsAudio || needsCover) toFetch++;
+      const needsBpm = audioPairs.has(pair) && !(cacheKey in bpmCache);
+      if (needsAudio || needsCover || needsBpm) toFetch++;
       else skipped++;
     }
 
@@ -406,9 +431,10 @@ async function main() {
       const cacheKey = `${song}|||${artist}`;
       const needsAudio = audioPairs.has(pair) && !(cacheKey in previewCache);
       const needsCover = !(cacheKey in coverCache);
-      if (!needsAudio && !needsCover) continue;
+      const needsBpm = audioPairs.has(pair) && !(cacheKey in bpmCache);
+      if (!needsAudio && !needsCover && !needsBpm) continue;
 
-      const { preview, coverUrl } = await fetchDeezerData(song, artist);
+      const { preview, coverUrl, bpm } = await fetchDeezerData(song, artist, { getBpm: needsBpm });
 
       if (needsAudio) {
         // Download the mp3 locally so it never expires
@@ -420,6 +446,9 @@ async function main() {
         const localImagePath = coverUrl ? await downloadImage(coverUrl, cacheKey) : null;
         coverCache[cacheKey] = localImagePath;
       }
+      if (needsBpm) {
+        bpmCache[cacheKey] = bpm; // null if not found
+      }
       fetched++;
 
       renderProgress(fetched, toFetch, skipped, fetchStart);
@@ -427,6 +456,7 @@ async function main() {
       if (fetched % 10 === 0) {
         writeFileSync(CACHE_PATH, JSON.stringify(previewCache, null, 2), "utf8");
         writeFileSync(COVER_CACHE_PATH, JSON.stringify(coverCache, null, 2), "utf8");
+        writeFileSync(BPM_CACHE_PATH, JSON.stringify(bpmCache, null, 2), "utf8");
       }
 
       await sleep(DEEZER_DELAY_MS);
@@ -437,10 +467,13 @@ async function main() {
 
     writeFileSync(CACHE_PATH, JSON.stringify(previewCache, null, 2), "utf8");
     writeFileSync(COVER_CACHE_PATH, JSON.stringify(coverCache, null, 2), "utf8");
+    writeFileSync(BPM_CACHE_PATH, JSON.stringify(bpmCache, null, 2), "utf8");
     const found = Object.values(previewCache).filter(Boolean).length;
     const coversFound = Object.values(coverCache).filter(Boolean).length;
-    console.log(`   Done — ${found} / ${Object.keys(previewCache).length} tracks have preview URLs`);
-    console.log(`   Done — ${coversFound} / ${Object.keys(coverCache).length} tracks have cover art`);
+    const bpmFound = Object.values(bpmCache).filter((v) => v != null && v > 0).length;
+    console.log(`   Done \u2014 ${found} / ${Object.keys(previewCache).length} tracks have preview URLs`);
+    console.log(`   Done \u2014 ${coversFound} / ${Object.keys(coverCache).length} tracks have cover art`);
+    console.log(`   Done \u2014 ${bpmFound} / ${Object.keys(bpmCache).length} rank-1 tracks have BPM`);
   } else {
     console.log("ℹ️   Skipping audio enrichment (--no-audio flag set).");
   }
@@ -459,9 +492,11 @@ async function main() {
       const cacheKey = `${song}|||${artist}`;
       const audioSrc = doAudio && rank === 1 ? (previewCache[cacheKey] ?? undefined) : undefined;
       const imageSrc = doAudio ? (coverCache[cacheKey] ?? undefined) : undefined;
+      const bpmRaw = doAudio && rank === 1 ? (bpmCache[cacheKey] ?? undefined) : undefined;
+      const bpm = typeof bpmRaw === "number" && bpmRaw > 0 ? bpmRaw : undefined;
       if (audioSrc) withAudio++;
 
-      entries.push({ name: song, value, date: dateIso, color, audioSrc, imageSrc, artist });
+      entries.push({ name: song, value, date: dateIso, color, audioSrc, imageSrc, bpm, artist });
     }
   }
 
@@ -478,6 +513,7 @@ async function main() {
       let line = `  { name: "${safe(e.name)}", value: ${e.value}, date: "${e.date}", color: "${e.color}"`;
       if (e.audioSrc) line += `, audioSrc: "${safe(e.audioSrc)}"`;
       if (e.imageSrc) line += `, imageSrc: "${safe(e.imageSrc)}"`;
+      if (e.bpm) line += `, bpm: ${e.bpm}`;
       line += " },";
       return line;
     })

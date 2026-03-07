@@ -15,6 +15,12 @@ const SYNTHETIC_HOLD_FRAMES = 0;
 const SYNTHETIC_TRANSITION_FRAMES = 15;
 const LABEL_TRANSITION_THRESHOLD = 0.5;
 const MAX_VALUE_PADDING = 1.05;
+/** Frames to ease zoom in, hold, ease zoom out when rank-1 song changes. */
+const ZOOM_IN_F = 12;
+const ZOOM_HOLD_F = 30;
+const ZOOM_OUT_F = 12;
+/** Peak scale factor when zooming into rank-1 runner. */
+const ZOOM_PEAK = 1.4;
 
 function localSceneFrames(
   s: TimeSnapshot,
@@ -191,8 +197,38 @@ export function RaceTrack({
   const LANE_H = 63;
   const LANES_TOP = 68;
 
-  // Running "bob" animation: subtle vertical sine wave
-  const bobOffset = Math.sin((frame / fps) * Math.PI * 3) * 2.5;
+  // Running "bob" animation: BPM-driven for rank-1, gentle sine for others
+  const rank1Bpm =
+    [...currentSnapshot.entries].sort((a, b) => b.value - a.value)[0]?.bpm ?? 120;
+  const eqBeatsPerFrameRT = (fps * 60) / rank1Bpm;
+  // Rank-1 oscillates in BPM rhythm; others stay still
+  const bpmBobOffset = Math.sin((frame / eqBeatsPerFrameRT) * Math.PI * 2) * 5;
+
+  // ── Rank-1 song change → zoom in on the new leader ───────────────────────────────────
+  // Find the previous non-synthetic snapshot to detect a rank-1 change.
+  let prevRealSceneIndex = -1;
+  for (let i = sceneIndex - 1; i >= 0; i--) {
+    if (!snapshots[i].isSynthetic) { prevRealSceneIndex = i; break; }
+  }
+  const prevRealSnapshot = prevRealSceneIndex >= 0 ? snapshots[prevRealSceneIndex] : null;
+  const currentRank1Name =
+    [...currentSnapshot.entries].sort((a, b) => b.value - a.value)[0]?.name ?? "";
+  const prevRank1Name = prevRealSnapshot
+    ? [...prevRealSnapshot.entries].sort((a, b) => b.value - a.value)[0]?.name ?? ""
+    : "";
+  // Fire zoom only on real snapshots where rank-1 has actually changed.
+  const isNewLeader =
+    !currentSnapshot.isSynthetic &&
+    currentRank1Name !== prevRank1Name &&
+    prevRank1Name !== "";
+  const zoomScale = isNewLeader
+    ? interpolate(
+        frameInScene,
+        [0, ZOOM_IN_F, ZOOM_IN_F + ZOOM_HOLD_F, ZOOM_IN_F + ZOOM_HOLD_F + ZOOM_OUT_F],
+        [1, ZOOM_PEAK, ZOOM_PEAK, 1],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+      )
+    : 1;
 
   return (    <>    <div
       style={{
@@ -307,6 +343,18 @@ export function RaceTrack({
         {dataset.valueLabel} →
       </div>
 
+      {/* ── Runners + Left labels (zoom-on-rank1-change wrapper) ── */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          transform: `scale(${zoomScale})`,
+          transformOrigin: "top center",
+        }}
+      >
       {/* ── Runners ── */}
       {renderEntriesRT.map((entry) => {
         const visualRank = Math.round(entry.interpolatedIndex);
@@ -317,8 +365,8 @@ export function RaceTrack({
         const avatarLeft = LABEL_WIDTH + avatarCx - AVATAR_SIZE / 2;
         const avatarTop = LANES_TOP + entry.interpolatedIndex * LANE_H + (LANE_H - AVATAR_SIZE) / 2;
 
-        // Leader bob, others static
-        const yOffset = isLeader ? bobOffset : 0;
+        // Leader bob: BPM-driven oscillation; others use ambient bob
+        const yOffset = isLeader ? bpmBobOffset : 0;
 
         // Speed streaks behind the leader
         const streakWidth = isLeader ? 40 + xRatio * 60 : 0;
@@ -487,7 +535,9 @@ export function RaceTrack({
             </div>
           </div>
         );
-      })}
+      })}  {/* end left label column */}
+
+      </div>  {/* end zoom wrapper */}
 
       {/* ── Bottom bar ── */}
       <div

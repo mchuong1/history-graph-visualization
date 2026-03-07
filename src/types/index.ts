@@ -14,6 +14,8 @@ export interface DataEntry {
   audioSrc?: string;
   /** Optional URL for an album/entity cover image (used in RaceTrack & PhysicsBarChart) */
   imageSrc?: string;
+  /** BPM of the track — used to drive beat-synced animations when this entry is rank #1 */
+  bpm?: number;
 }
 
 /**
