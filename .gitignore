@@ -6,3 +6,7 @@ out/
 *.webm
 *.mov
 .DS_Store
+
+datasets/
+src/data/
+.env

@@ -66,19 +66,68 @@ export function buildTimeSnapshots(
   topN: number
 ): TimeSnapshot[] {
   const dates = getUniqueDates(dataset);
+  const fmt = dataset.dateFormat ?? 'year';
 
   return dates.map((date) => ({
     date,
-    label: formatDateLabel(date),
+    label: formatDateLabel(date, fmt),
     entries: getTopNForDate(dataset, date, topN),
   }));
 }
 
 /**
- * Formats an ISO date string as a human-readable label.
+ * Builds a TimeSnapshot array with synthetic interpolated snapshots inserted
+ * between each pair of real snapshots, so values visibly count between dates.
+ *
+ * @param syntheticSteps - number of synthetic sub-steps between each real date pair
  */
-export function formatDateLabel(date: string): string {
+export function buildExpandedTimeSnapshots(
+  dataset: Dataset,
+  topN: number,
+  syntheticSteps: number = 7
+): TimeSnapshot[] {
+  const real = buildTimeSnapshots(dataset, topN);
+  if (real.length === 0) return [];
+
+  const expanded: TimeSnapshot[] = [];
+
+  for (let i = 0; i < real.length; i++) {
+    // Push the real snapshot
+    expanded.push({ ...real[i], isSynthetic: false });
+
+    // Insert synthetic steps between this and the next real snapshot
+    if (i < real.length - 1) {
+      const from = real[i];
+      const to = real[i + 1];
+
+      for (let step = 1; step <= syntheticSteps; step++) {
+        const progress = step / (syntheticSteps + 1);
+        const interpolated = interpolateSnapshots(from.entries, to.entries, progress);
+        expanded.push({
+          date: from.date,
+          label: from.label,
+          entries: interpolated,
+          isSynthetic: true,
+        });
+      }
+    }
+  }
+
+  return expanded;
+}
+
+/**
+ * Formats an ISO date string as a human-readable label.
+ * @param dateFormat - 'year' returns e.g. "2020"; 'month-year' returns e.g. "Jan 2020"
+ */
+export function formatDateLabel(
+  date: string,
+  dateFormat: 'year' | 'month-year' = 'year'
+): string {
   const d = new Date(date);
+  if (dateFormat === 'month-year') {
+    return d.toLocaleString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
   return d.getUTCFullYear().toString();
 }
 
