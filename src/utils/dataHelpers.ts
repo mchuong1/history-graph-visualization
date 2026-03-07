@@ -48,6 +48,8 @@ export function interpolateSnapshots(
     const interpolatedValue = fromValue + (toValue - fromValue) * progress;
 
     interpolated.push({
+      // Spread all fields from the source entry (preserves imageSrc, audioSrc, artist, etc.)
+      ...(t ?? f!),
       name,
       value: interpolatedValue,
       date: t?.date ?? f?.date ?? "",

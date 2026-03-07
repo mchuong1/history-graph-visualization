@@ -371,7 +371,7 @@ export function RaceTrack({
             >
               {entry.imageSrc ? (
                 <img
-                  src={entry.imageSrc}
+                  src={entry.imageSrc.startsWith("/") ? staticFile(entry.imageSrc.slice(1)) : entry.imageSrc}
                   style={{
                     width: "100%",
                     height: "100%",

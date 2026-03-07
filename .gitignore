@@ -11,3 +11,4 @@ datasets/
 src/data/
 .env
 public/audio/
+public/images/

@@ -33,6 +33,7 @@ const CSV_PATH = resolve(ROOT, "datasets/billboard_hot100.csv");
 const CACHE_PATH = resolve(ROOT, "datasets/spotify_preview_cache.json");
 const COVER_CACHE_PATH = resolve(ROOT, "datasets/billboard_cover_cache.json");
 const AUDIO_DIR = resolve(ROOT, "public/audio");
+const IMAGES_DIR = resolve(ROOT, "public/images");
 const OUT_PATH = resolve(ROOT, "src/data/billboardHot100.ts");
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -244,6 +245,33 @@ async function downloadAudio(cdnUrl, cacheKey) {
   }
 }
 
+/**
+ * Downloads a Deezer cover CDN URL to public/images/<hash>.jpg.
+ * Returns the local public path "/images/<hash>.jpg", or null on failure.
+ * Skips download if the file already exists.
+ */
+async function downloadImage(cdnUrl, cacheKey) {
+  mkdirSync(IMAGES_DIR, { recursive: true });
+  const hash = createHash("sha1").update(cacheKey).digest("hex").slice(0, 16);
+  const filename = `${hash}.jpg`;
+  const localPath = resolve(IMAGES_DIR, filename);
+  const publicPath = `/images/${filename}`;
+
+  if (existsSync(localPath)) return publicPath; // already downloaded
+
+  try {
+    const res = await fetch(cdnUrl, {
+      headers: { "User-Agent": "history-graph-visualization/1.0" },
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(localPath, buf);
+    return publicPath;
+  } catch {
+    return null;
+  }
+}
+
 /** Renders an inline progress bar that overwrites the current terminal line. */
 function renderProgress(done, total, skipped, startMs) {
   const BAR_W = 28;
@@ -307,7 +335,30 @@ async function main() {
     }
     if (existsSync(COVER_CACHE_PATH)) {
       coverCache = JSON.parse(readFileSync(COVER_CACHE_PATH, "utf8"));
-      console.log(`🖼️   Loaded ${Object.keys(coverCache).length} cached cover URLs`);
+      console.log(`🖼️   Loaded ${Object.keys(coverCache).length} cached cover entries`);
+
+      // Migrate any remaining CDN URLs to local files — CDN links can change
+      // or expire; local /images/ files are permanent.
+      const cdnEntries = Object.entries(coverCache).filter(
+        ([, v]) => v && String(v).startsWith("https://")
+      );
+      if (cdnEntries.length > 0) {
+        console.log(`📥  Migrating ${cdnEntries.length} CDN cover URLs → local files…`);
+        let migrated = 0;
+        const migrateStart = Date.now();
+        for (const [key, url] of cdnEntries) {
+          const localPath = await downloadImage(url, key);
+          coverCache[key] = localPath;
+          migrated++;
+          renderProgress(migrated, cdnEntries.length, 0, migrateStart);
+          if (migrated % 10 === 0) {
+            writeFileSync(COVER_CACHE_PATH, JSON.stringify(coverCache, null, 2), "utf8");
+          }
+        }
+        process.stdout.write("\n");
+        writeFileSync(COVER_CACHE_PATH, JSON.stringify(coverCache, null, 2), "utf8");
+        console.log(`   ✅  Migrated ${migrated} cover images to public/images/`);
+      }
     }
 
     console.log("🎵  Fetching preview + cover URLs via Deezer (no auth needed)…");
@@ -364,7 +415,11 @@ async function main() {
         const localPath = preview ? await downloadAudio(preview, cacheKey) : null;
         previewCache[cacheKey] = localPath;
       }
-      if (needsCover) coverCache[cacheKey] = coverUrl;
+      if (needsCover) {
+        // Download the image locally so it never depends on CDN availability
+        const localImagePath = coverUrl ? await downloadImage(coverUrl, cacheKey) : null;
+        coverCache[cacheKey] = localImagePath;
+      }
       fetched++;
 
       renderProgress(fetched, toFetch, skipped, fetchStart);

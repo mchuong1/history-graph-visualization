@@ -417,7 +417,7 @@ export function PhysicsBarChart({
             >
               {row.imageSrc ? (
                 <img
-                  src={row.imageSrc}
+                  src={row.imageSrc.startsWith("/") ? staticFile(row.imageSrc.slice(1)) : row.imageSrc}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   alt={row.name}
                 />
