@@ -1,5 +1,5 @@
 import React from "react";
-import { useCurrentFrame, useVideoConfig, interpolate, Audio, Sequence } from "remotion";
+import { useCurrentFrame, useVideoConfig, interpolate, Audio, Sequence, staticFile } from "remotion";
 import type { BarChartRaceProps, TimeSnapshot } from "../types/index";
 import { AnimatedBarChart } from "./AnimatedBarChart";
 import {
@@ -220,7 +220,7 @@ export function BarChartRace({
     {audioSegments.map(({ from: segFrom, duration: segDuration, audioSrc }, i) => (
       <Sequence key={`audio-${i}`} from={segFrom} durationInFrames={segDuration} layout="none">
         <Audio
-          src={audioSrc}
+          src={audioSrc.startsWith("/") ? staticFile(audioSrc.slice(1)) : audioSrc}
           volume={
             audioFollowsRank
               ? (f: number) => {

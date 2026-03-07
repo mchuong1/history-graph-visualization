@@ -12,6 +12,8 @@ export interface DataEntry {
   color?: string;
   /** Optional URL for a short audio clip to play while this entry is #1 */
   audioSrc?: string;
+  /** Optional URL for an album/entity cover image (used in RaceTrack & PhysicsBarChart) */
+  imageSrc?: string;
 }
 
 /**

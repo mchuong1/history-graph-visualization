@@ -10,3 +10,4 @@ out/
 datasets/
 src/data/
 .env
+public/audio/

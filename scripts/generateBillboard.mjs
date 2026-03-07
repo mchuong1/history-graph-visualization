@@ -20,9 +20,10 @@
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -30,6 +31,8 @@ const ROOT = resolve(__dirname, "..");
 // ─── Paths ───────────────────────────────────────────────────────────────────
 const CSV_PATH = resolve(ROOT, "datasets/billboard_hot100.csv");
 const CACHE_PATH = resolve(ROOT, "datasets/spotify_preview_cache.json");
+const COVER_CACHE_PATH = resolve(ROOT, "datasets/billboard_cover_cache.json");
+const AUDIO_DIR = resolve(ROOT, "public/audio");
 const OUT_PATH = resolve(ROOT, "src/data/billboardHot100.ts");
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -150,7 +153,11 @@ function aggregateMonthly(rows) {
  * Queries the free Deezer Search API for a 30-second preview URL.
  * No API key or account needed.
  */
-async function fetchDeezerPreviewUrl(song, artist) {
+/**
+ * Queries the free Deezer Search API for a 30-second preview URL and album cover.
+ * Returns { preview, coverUrl } — either may be null if not found.
+ */
+async function fetchDeezerData(song, artist) {
   // Strip featured artist suffixes for a cleaner query.
   // e.g. "Dua Lipa Featuring DaBaby" → "Dua Lipa"
   const primaryArtist = artist
@@ -189,18 +196,73 @@ async function fetchDeezerPreviewUrl(song, artist) {
             r.preview &&
             r.title?.toLowerCase().includes(songLower.slice(0, 6))
         ) ??
-        data.data.find((r) => r.preview);
+        data.data.find((r) => r.preview) ??
+        data.data[0];
 
-      if (best?.preview) return best.preview;
+      if (best) {
+        return {
+          preview: best.preview ?? null,
+          coverUrl: best.album?.cover_medium ?? best.album?.cover ?? null,
+        };
+      }
     } catch {
       continue;
     }
   }
-  return null;
+  return { preview: null, coverUrl: null };
 }
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Downloads a Deezer preview CDN URL to public/audio/<hash>.mp3.
+ * Returns the local public path "/audio/<hash>.mp3", or null on failure.
+ * Skips download if the file already exists.
+ */
+async function downloadAudio(cdnUrl, cacheKey) {
+  mkdirSync(AUDIO_DIR, { recursive: true });
+  // Use a hash of the cache key for a stable, collision-free filename.
+  const hash = createHash("sha1").update(cacheKey).digest("hex").slice(0, 16);
+  const filename = `${hash}.mp3`;
+  const localPath = resolve(AUDIO_DIR, filename);
+  const publicPath = `/audio/${filename}`;
+
+  if (existsSync(localPath)) return publicPath; // already downloaded
+
+  try {
+    const res = await fetch(cdnUrl, {
+      headers: { "User-Agent": "history-graph-visualization/1.0" },
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(localPath, buf);
+    return publicPath;
+  } catch {
+    return null;
+  }
+}
+
+/** Renders an inline progress bar that overwrites the current terminal line. */
+function renderProgress(done, total, skipped, startMs) {
+  const BAR_W = 28;
+  const pct = total > 0 ? done / total : 0;
+  const filled = Math.round(pct * BAR_W);
+  const bar = "█".repeat(filled) + "░".repeat(BAR_W - filled);
+
+  const elapsed = (Date.now() - startMs) / 1000;
+  const rate = done > 0 ? elapsed / done : 0;
+  const remaining = rate * (total - done);
+  const etaStr =
+    done === 0
+      ? "…"
+      : remaining < 60
+      ? `${Math.ceil(remaining)}s`
+      : `${Math.floor(remaining / 60)}m ${Math.ceil(remaining % 60)}s`;
+
+  const line = `   [${bar}] ${done}/${total} (${Math.round(pct * 100)}%)  cached:${skipped}  ETA: ${etaStr}   `;
+  process.stdout.write(`\r${line}`);
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -224,46 +286,106 @@ async function main() {
   const doAudio = !noAudio;
 
   let previewCache = {};
+  let coverCache = {};
   if (doAudio) {
     if (existsSync(CACHE_PATH)) {
       previewCache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
-      console.log(`🎵  Loaded ${Object.keys(previewCache).length} cached preview URLs`);
+      // Purge any remaining CDN URLs (hdnea= tokens) — they expire in ~3h.
+      // Local /audio/ paths are permanent and never purged.
+      let purged = 0;
+      for (const [key, url] of Object.entries(previewCache)) {
+        if (url && String(url).includes("hdnea=")) {
+          delete previewCache[key];
+          purged++;
+        }
+      }
+      if (purged > 0) {
+        console.log(`⚠️   Purged ${purged} expiring CDN audio URLs — will download locally`);
+        writeFileSync(CACHE_PATH, JSON.stringify(previewCache, null, 2), "utf8");
+      }
+      console.log(`🎵  Loaded ${Object.keys(previewCache).length} locally-cached preview paths`);
+    }
+    if (existsSync(COVER_CACHE_PATH)) {
+      coverCache = JSON.parse(readFileSync(COVER_CACHE_PATH, "utf8"));
+      console.log(`🖼️   Loaded ${Object.keys(coverCache).length} cached cover URLs`);
     }
 
-    console.log("🎵  Fetching preview URLs via Deezer (no auth needed)…");
+    console.log("🎵  Fetching preview + cover URLs via Deezer (no auth needed)…");
 
     let fetched = 0;
     let skipped = 0;
 
-    // Collect unique song+artist pairs — only the #1 ranked entry per month
-    // needs audio; all other bars are silent.
-    const uniquePairs = new Set();
+    // Audio: only the #1 entry per month needs a preview download.
+    // Cover art: all entries need it for the visualisations.
+    const audioPairs = new Set(); // only rank-1 per month
+    const coverPairs = new Set(); // every visible entry
     for (const entries of byMonth.values()) {
-      const top = entries[0]; // entries are sorted by rank ascending
-      if (top) uniquePairs.add(`${top.song}\x00${top.artist}`);
+      for (let i = 0; i < entries.length; i++) {
+        const { song, artist } = entries[i];
+        coverPairs.add(`${song}\x00${artist}`);
+        if (i === 0) audioPairs.add(`${song}\x00${artist}`); // rank-1 only
+      }
     }
 
-    for (const pair of uniquePairs) {
+    // Merge into one de-duped work list: cover for all, audio only for rank-1s
+    const allPairs = [...coverPairs];
+
+    // Count how many actually need fetching
+    let toFetch = 0;
+    for (const pair of allPairs) {
       const [song, artist] = pair.split("\x00");
       const cacheKey = `${song}|||${artist}`;
-      if (cacheKey in previewCache) { skipped++; continue; }
+      const needsAudio = audioPairs.has(pair) && !(cacheKey in previewCache);
+      const needsCover = !(cacheKey in coverCache);
+      if (needsAudio || needsCover) toFetch++;
+      else skipped++;
+    }
 
-      const url = await fetchDeezerPreviewUrl(song, artist);
+    console.log(
+      `   ${audioPairs.size} #1 tracks for audio, ${coverPairs.size} tracks for covers — ${toFetch} to fetch, ${skipped} already cached`
+    );
+    if (toFetch === 0) {
+      console.log("   ✅  All tracks already cached, skipping API calls.");
+    }
 
-      previewCache[cacheKey] = url;
+    const fetchStart = Date.now();
+
+    for (const pair of allPairs) {
+      const [song, artist] = pair.split("\x00");
+      const cacheKey = `${song}|||${artist}`;
+      const needsAudio = audioPairs.has(pair) && !(cacheKey in previewCache);
+      const needsCover = !(cacheKey in coverCache);
+      if (!needsAudio && !needsCover) continue;
+
+      const { preview, coverUrl } = await fetchDeezerData(song, artist);
+
+      if (needsAudio) {
+        // Download the mp3 locally so it never expires
+        const localPath = preview ? await downloadAudio(preview, cacheKey) : null;
+        previewCache[cacheKey] = localPath;
+      }
+      if (needsCover) coverCache[cacheKey] = coverUrl;
       fetched++;
 
+      renderProgress(fetched, toFetch, skipped, fetchStart);
+
       if (fetched % 10 === 0) {
-        console.log(`   …fetched ${fetched} (${skipped} cached)`);
         writeFileSync(CACHE_PATH, JSON.stringify(previewCache, null, 2), "utf8");
+        writeFileSync(COVER_CACHE_PATH, JSON.stringify(coverCache, null, 2), "utf8");
       }
 
       await sleep(DEEZER_DELAY_MS);
     }
 
+    // Move to next line after the inline bar
+    if (toFetch > 0) process.stdout.write("\n");
+
     writeFileSync(CACHE_PATH, JSON.stringify(previewCache, null, 2), "utf8");
+    writeFileSync(COVER_CACHE_PATH, JSON.stringify(coverCache, null, 2), "utf8");
     const found = Object.values(previewCache).filter(Boolean).length;
+    const coversFound = Object.values(coverCache).filter(Boolean).length;
     console.log(`   Done — ${found} / ${Object.keys(previewCache).length} tracks have preview URLs`);
+    console.log(`   Done — ${coversFound} / ${Object.keys(coverCache).length} tracks have cover art`);
   } else {
     console.log("ℹ️   Skipping audio enrichment (--no-audio flag set).");
   }
@@ -281,9 +403,10 @@ async function main() {
       const color = artistColor(artist);
       const cacheKey = `${song}|||${artist}`;
       const audioSrc = doAudio && rank === 1 ? (previewCache[cacheKey] ?? undefined) : undefined;
+      const imageSrc = doAudio ? (coverCache[cacheKey] ?? undefined) : undefined;
       if (audioSrc) withAudio++;
 
-      entries.push({ name: song, value, date: dateIso, color, audioSrc, artist });
+      entries.push({ name: song, value, date: dateIso, color, audioSrc, imageSrc, artist });
     }
   }
 
@@ -299,6 +422,7 @@ async function main() {
       const safe = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       let line = `  { name: "${safe(e.name)}", value: ${e.value}, date: "${e.date}", color: "${e.color}"`;
       if (e.audioSrc) line += `, audioSrc: "${safe(e.audioSrc)}"`;
+      if (e.imageSrc) line += `, imageSrc: "${safe(e.imageSrc)}"`;
       line += " },";
       return line;
     })
