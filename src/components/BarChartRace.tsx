@@ -36,19 +36,6 @@ const LABEL_TRANSITION_THRESHOLD = 0.5;
 /** Multiplier added to the global max value to keep bars from hitting the chart edge */
 const MAX_VALUE_PADDING = 1.05;
 
-/** Per-snapshot hold frame budget */
-function holdFrames(s: TimeSnapshot): number {
-  return s.isSynthetic ? SYNTHETIC_HOLD_FRAMES : HOLD_FRAMES;
-}
-/** Per-snapshot transition frame budget */
-function transFrames(s: TimeSnapshot): number {
-  return s.isSynthetic ? SYNTHETIC_TRANSITION_FRAMES : TRANSITION_FRAMES;
-}
-/** Total frame budget for a snapshot */
-function sceneFrames(s: TimeSnapshot): number {
-  return holdFrames(s) + transFrames(s);
-}
-
 export function BarChartRace({
   dataset,
   topN,
