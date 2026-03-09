@@ -1,5 +1,5 @@
 import React from "react";
-import { useCurrentFrame, useVideoConfig, interpolate, Audio, Sequence, staticFile } from "remotion";
+import { useCurrentFrame, useVideoConfig, interpolate, Audio, Sequence, staticFile, Img } from "remotion";
 import type { BarChartRaceProps, TimeSnapshot } from "../types/index";
 import {
   buildExpandedTimeSnapshots,
@@ -431,7 +431,7 @@ export function RaceTrack({
               }}
             >
               {entry.imageSrc ? (
-                <img
+                <Img
                   src={entry.imageSrc.startsWith("/") ? staticFile(entry.imageSrc.slice(1)) : entry.imageSrc}
                   style={{
                     width: "100%",

@@ -1,5 +1,5 @@
 import React from "react";
-import { useCurrentFrame, useVideoConfig, spring, interpolate, Audio, Sequence, staticFile } from "remotion";
+import { useCurrentFrame, useVideoConfig, spring, interpolate, Audio, Sequence, staticFile, Img } from "remotion";
 import { useAudioData, visualizeAudio } from "@remotion/media-utils";
 import type { BarChartRaceProps, DataEntry, TimeSnapshot } from "../types/index";
 import {
@@ -486,7 +486,7 @@ export function PhysicsBarChart({
               }}
             >
               {row.imageSrc ? (
-                <img
+                <Img
                   src={row.imageSrc.startsWith("/") ? staticFile(row.imageSrc.slice(1)) : row.imageSrc}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   alt={row.name}
