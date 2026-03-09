@@ -29,7 +29,6 @@
 | `SNAPSHOT_BUFFER` | `5` | Extra entries beyond `topN` for off-screen interpolation |
 | `HOLD_FRAMES` | `60` | Frames each snapshot is held |
 | `TRANSITION_FRAMES` | `30` | Frames to interpolate between snapshots |
-| `FRAMES_PER_SCENE` | `HOLD_FRAMES + TRANSITION_FRAMES` | Frames per time period |
 | `MAX_VALUE_PADDING` | `1.05` | Global max value multiplier to avoid clipping |
 
 **Key files**:
@@ -37,9 +36,11 @@
 - `src/index.tsx` — Remotion root; registers `BarChartRace` composition and computes `durationInFrames`
 - `src/types/index.ts` — domain types (`DataEntry`, `TimeSnapshot`, `Dataset`, `BarChartRaceProps`)
 - `src/data/programmingLanguages.ts` — sample `Dataset`; follow this shape for new datasets
-- `src/utils/dataHelpers.ts` — pure functions: `getUniqueDates`, `getTopNForDate`, `interpolateSnapshots`, `buildTimeSnapshots`, `formatDateLabel`, `easeInOut`, `getColor`
+- `src/utils/dataHelpers.ts` — pure functions: `getUniqueDates`, `getTopNForDate`, `interpolateSnapshots`, `buildTimeSnapshots`, `buildExpandedTimeSnapshots`, `formatDateLabel`, `easeInOut`, `getColor`
 - `src/components/BarChartRace.tsx` — orchestrates frame logic, snapshot selection, and label animation
 - `src/components/AnimatedBarChart.tsx` — presentational Recharts wrapper; accepts `entries`, `colorScheme`, `valueLabel`, `maxValue`
+- `src/components/RaceTrack.tsx` — alternative race-track layout composition
+- `src/components/PhysicsBarChart.tsx` — physics-based bar chart composition
 - `src/styles/global.css` — Tailwind v4 entry (`@import "tailwindcss"`) + custom theme tokens
 
 ## Code Style & Conventions
