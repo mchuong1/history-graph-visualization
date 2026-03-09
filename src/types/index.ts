@@ -10,6 +10,12 @@ export interface DataEntry {
   date: string;
   /** Optional hex color for this entity */
   color?: string;
+  /** Optional URL for a short audio clip to play while this entry is #1 */
+  audioSrc?: string;
+  /** Optional URL for an album/entity cover image (used in RaceTrack & PhysicsBarChart) */
+  imageSrc?: string;
+  /** BPM of the track — used to drive beat-synced animations when this entry is rank #1 */
+  bpm?: number;
 }
 
 /**
@@ -19,6 +25,8 @@ export interface TimeSnapshot {
   date: string;
   label: string;
   entries: DataEntry[];
+  /** True for interpolated sub-steps inserted between real data dates */
+  isSynthetic?: boolean;
 }
 
 /**
@@ -28,6 +36,8 @@ export interface Dataset {
   title: string;
   valueLabel: string;
   entries: DataEntry[];
+  /** Controls how snapshot date labels are formatted. Defaults to 'year'. */
+  dateFormat?: 'year' | 'month-year';
 }
 
 /**
@@ -38,4 +48,13 @@ export interface BarChartRaceProps extends Record<string, unknown> {
   dataset: Dataset;
   topN: number;
   colorScheme: string[];
+  /** Override the hold-phase frame count for real snapshots (default: 60) */
+  holdFramesOverride?: number;
+  /** Override the transition-phase frame count for real snapshots (default: 30) */
+  transFramesOverride?: number;
+  /**
+   * When true, audio cross-fades as the #1 entity changes during transitions.
+   * When false (default), each snapshot's #1 audio plays for the full scene duration.
+   */
+  audioFollowsRank?: boolean;
 }
