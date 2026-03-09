@@ -327,7 +327,6 @@ async function main() {
 
   let previewCache = {};
   let coverCache = {};
-  let bpmCache = {};
   if (doAudio) {
     if (existsSync(CACHE_PATH)) {
       previewCache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
