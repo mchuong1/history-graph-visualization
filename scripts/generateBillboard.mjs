@@ -147,14 +147,7 @@ function aggregateMonthly(rows) {
   return new Map([...byMonth.entries()].sort());
 }
 
-// ─── iTunes helper (no auth required) ───────────────────────────────────────
-/**
- * Queries the free Apple iTunes Search API for a 30-second preview URL.
 // ─── Deezer helper (no auth required) ────────────────────────────────────────
-/**
- * Queries the free Deezer Search API for a 30-second preview URL.
- * No API key or account needed.
- */
 /**
  * Queries the free Deezer Search API for a 30-second preview URL and album cover.
  * Returns { preview, coverUrl } — either may be null if not found.
